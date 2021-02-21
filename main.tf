@@ -1,15 +1,6 @@
 # Specify the provider and access details
-
-# We use vault to get credentials, but you can use variables to achieve the same thing
-data "vault_generic_secret" "aws_creds" {
-  path = "aws/sts/manage-${var.aws_account_id}"
-}
-
 provider "aws" {
-  access_key = "${data.vault_generic_secret.aws_creds.data["access_key"]}"
-  secret_key = "${data.vault_generic_secret.aws_creds.data["secret_key"]}"
-  token      = "${data.vault_generic_secret.aws_creds.data["security_token"]}"
-  region     = "${var.aws_region}"
+  region     = var.aws_region
 }
 
 ### Network
@@ -23,7 +14,7 @@ resource "aws_vpc" "main" {
 
 # Create var.az_count private subnets, each in a different AZ
 resource "aws_subnet" "private" {
-  count             = "${var.az_count}"
+  count             = var.az_count
   cidr_block        = "${cidrsubnet(aws_vpc.main.cidr_block, 8, count.index)}"
   availability_zone = "${data.aws_availability_zones.available.names[count.index]}"
   vpc_id            = "${aws_vpc.main.id}"
@@ -31,7 +22,7 @@ resource "aws_subnet" "private" {
 
 # Create var.az_count public subnets, each in a different AZ
 resource "aws_subnet" "public" {
-  count                   = "${var.az_count}"
+  count                   = var.az_count
   cidr_block              = "${cidrsubnet(aws_vpc.main.cidr_block, 8, var.az_count + count.index)}"
   availability_zone       = "${data.aws_availability_zones.available.names[count.index]}"
   vpc_id                  = "${aws_vpc.main.id}"
@@ -52,13 +43,13 @@ resource "aws_route" "internet_access" {
 
 # Create a NAT gateway with an EIP for each private subnet to get internet connectivity
 resource "aws_eip" "gw" {
-  count      = "${var.az_count}"
+  count      = var.az_count
   vpc        = true
   depends_on = ["aws_internet_gateway.gw"]
 }
 
 resource "aws_nat_gateway" "gw" {
-  count         = "${var.az_count}"
+  count         = var.az_count
   subnet_id     = "${element(aws_subnet.public.*.id, count.index)}"
   allocation_id = "${element(aws_eip.gw.*.id, count.index)}"
 }
@@ -66,7 +57,7 @@ resource "aws_nat_gateway" "gw" {
 # Create a new route table for the private subnets
 # And make it route non-local traffic through the NAT gateway to the internet
 resource "aws_route_table" "private" {
-  count  = "${var.az_count}"
+  count  = var.az_count
   vpc_id = "${aws_vpc.main.id}"
 
   route {
@@ -77,7 +68,7 @@ resource "aws_route_table" "private" {
 
 # Explicitely associate the newly created route tables to the private subnets (so they don't default to the main route table)
 resource "aws_route_table_association" "private" {
-  count          = "${var.az_count}"
+  count          = var.az_count
   subnet_id      = "${element(aws_subnet.private.*.id, count.index)}"
   route_table_id = "${element(aws_route_table.private.*.id, count.index)}"
 }
@@ -114,8 +105,8 @@ resource "aws_security_group" "ecs_tasks" {
 
   ingress {
     protocol        = "tcp"
-    from_port       = "${var.app_port}"
-    to_port         = "${var.app_port}"
+    from_port       = var.app_port
+    to_port         = var.app_port
     security_groups = ["${aws_security_group.lb.id}"]
   }
 
@@ -159,20 +150,21 @@ resource "aws_alb_listener" "front_end" {
 
 resource "aws_ecs_cluster" "main" {
   name = "tf-ecs-cluster"
+  capacity_providers = ["FARGATE_SPOT"]
 }
 
 resource "aws_ecs_task_definition" "app" {
   family                   = "app"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "${var.fargate_cpu}"
-  memory                   = "${var.fargate_memory}"
+  cpu                      = var.fargate_cpu
+  memory                   = var.fargate_memory
 
   container_definitions = <<DEFINITION
 [
   {
     "cpu": ${var.fargate_cpu},
-    "image": "${var.app_image}",
+    "image": var.app_image,
     "memory": ${var.fargate_memory},
     "name": "app",
     "networkMode": "awsvpc",
@@ -191,7 +183,7 @@ resource "aws_ecs_service" "main" {
   name            = "tf-ecs-service"
   cluster         = "${aws_ecs_cluster.main.id}"
   task_definition = "${aws_ecs_task_definition.app.arn}"
-  desired_count   = "${var.app_count}"
+  desired_count   = var.app_count
   launch_type     = "FARGATE"
 
   network_configuration {
@@ -202,7 +194,7 @@ resource "aws_ecs_service" "main" {
   load_balancer {
     target_group_arn = "${aws_alb_target_group.app.id}"
     container_name   = "app"
-    container_port   = "${var.app_port}"
+    container_port   = var.app_port
   }
 
   depends_on = [
