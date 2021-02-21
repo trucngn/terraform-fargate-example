@@ -45,7 +45,7 @@ resource "aws_route" "internet_access" {
 resource "aws_eip" "gw" {
   count      = var.az_count
   vpc        = true
-  depends_on = ["aws_internet_gateway.gw"]
+  depends_on = [aws_internet_gateway.gw]
 }
 
 resource "aws_nat_gateway" "gw" {
@@ -107,7 +107,7 @@ resource "aws_security_group" "ecs_tasks" {
     protocol        = "tcp"
     from_port       = var.app_port
     to_port         = var.app_port
-    security_groups = ["${aws_security_group.lb.id}"]
+    security_groups = [aws_security_group.lb.id]
   }
 
   egress {
@@ -122,8 +122,8 @@ resource "aws_security_group" "ecs_tasks" {
 
 resource "aws_alb" "main" {
   name            = "tf-ecs-chat"
-  subnets         = ["${aws_subnet.public.*.id}"]
-  security_groups = ["${aws_security_group.lb.id}"]
+  security_groups = [aws_security_group.lb.id]
+  subnets         = aws_subnet.public.*.id
 }
 
 resource "aws_alb_target_group" "app" {
@@ -148,6 +148,10 @@ resource "aws_alb_listener" "front_end" {
 
 ### ECS
 
+resource "aws_cloudwatch_log_group" "ecslogs" {
+  name = "/ecs/terraform-tasks"
+}
+
 resource "aws_ecs_cluster" "main" {
   name               = "tf-ecs-cluster"
   capacity_providers = ["FARGATE_SPOT"]
@@ -156,6 +160,7 @@ resource "aws_ecs_cluster" "main" {
 resource "aws_ecs_task_definition" "app" {
   family                   = "app"
   network_mode             = "awsvpc"
+  execution_role_arn       = "arn:aws:iam::${var.aws_account_id}:role/ecsTaskExecutionRole"
   requires_compatibilities = ["FARGATE"]
   cpu                      = var.fargate_cpu
   memory                   = var.fargate_memory
@@ -164,7 +169,7 @@ resource "aws_ecs_task_definition" "app" {
 [
   {
     "cpu": ${var.fargate_cpu},
-    "image": var.app_image,
+    "image": "${var.app_image}",
     "memory": ${var.fargate_memory},
     "name": "app",
     "networkMode": "awsvpc",
@@ -173,7 +178,15 @@ resource "aws_ecs_task_definition" "app" {
         "containerPort": ${var.app_port},
         "hostPort": ${var.app_port}
       }
-    ]
+    ],
+    "logConfiguration": {
+      "logDriver": "awslogs",
+      "options": {
+        "awslogs-group": "${aws_cloudwatch_log_group.ecslogs.name}",
+        "awslogs-region": "${var.aws_region}",
+        "awslogs-stream-prefix": "ecstask"
+      }
+    }
   }
 ]
 DEFINITION
@@ -187,8 +200,8 @@ resource "aws_ecs_service" "main" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    security_groups = ["${aws_security_group.ecs_tasks.id}"]
-    subnets         = ["${aws_subnet.private.*.id}"]
+    security_groups = [aws_security_group.ecs_tasks.id]
+    subnets         = aws_subnet.private.*.id
   }
 
   load_balancer {
@@ -197,7 +210,5 @@ resource "aws_ecs_service" "main" {
     container_port   = var.app_port
   }
 
-  depends_on = [
-    "aws_alb_listener.front_end",
-  ]
+  depends_on = [aws_alb_listener.front_end]
 }

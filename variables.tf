@@ -1,6 +1,6 @@
 variable "aws_region" {
   description = "The AWS region to create things in."
-  default     = "us-east-1"
+  default     = "eu-west-1"
 }
 
 variable "aws_account_id" {
@@ -14,7 +14,7 @@ variable "az_count" {
 
 variable "app_image" {
   description = "Docker image to run in the ECS cluster"
-  default     = "adongy/hostname-docker:latest"
+  default     = "trucngn/go-http-hello-world:latest"
 }
 
 variable "app_port" {
